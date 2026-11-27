@@ -44,8 +44,8 @@ from sellbird.state import StateManager, _new_id, _norm
 logger = logging.getLogger("sellbird.mailboxes")
 
 MAIN = ""                       # the main mailbox's id
-PROVIDERS = ("google", "microsoft", "smtp")
-BUILT_IN_CONNECTIONS = ("oauth", "smtp")
+PROVIDERS = ("google", "microsoft", "smtp", "mailflare")
+BUILT_IN_CONNECTIONS = ("oauth", "smtp", "mailflare")
 STATES = ("active", "retired")
 # A user's own number never goes past this per inbox: well below Google's and
 # Microsoft's daily sending limits.
@@ -395,6 +395,9 @@ def build_provider(row: dict, *, config, env, secrets: SecretStore) -> MailProvi
         from sellbird.integrations.smtp_mail import SmtpImapProvider
         settings = _smtp_settings(row, secrets.get(smtp_ref(row["id"])) or "")
         return SmtpImapProvider(config, env, identity=identity, smtp=settings)
+    if connection == "mailflare" and provider == "mailflare":
+        from sellbird.integrations.mailflare import MailflareProvider
+        return MailflareProvider(config, env, identity=identity)
     from sellbird import extensions
     builder = extensions.registry().mailbox_connections.get(connection)
     if builder is None:
@@ -406,12 +409,8 @@ def build_provider(row: dict, *, config, env, secrets: SecretStore) -> MailProvi
 
 def check_provider_allows_inboxes(config) -> None:
     provider = (getattr(config.channels.email, "provider", "") or "").strip().lower()
-    if provider in ("gmail", "microsoft", "smtp"):
+    if provider in ("gmail", "microsoft", "smtp", "mailflare"):
         return
-    if provider == "mailflare":
-        raise ConnectRefused(
-            "Mailflare is supported as the primary sending inbox. Connecting additional "
-            "Mailflare inboxes through the secondary-inbox screen is not implemented yet.")
     name = "Instantly" if provider == "instantly" else (provider or "not set")
     raise ConnectRefused(
         f"Your sending provider is {name}. Instantly installs send through Instantly "
@@ -468,6 +467,24 @@ async def connect_oauth_mailbox(store: MailboxStore, secrets: SecretStore, confi
     return await _insert(store, mailbox_id=mailbox_id, address=addr, provider=provider,
                          connection="oauth", display_name=display_name,
                          credential_ref=ref, warmup_started_at=warmup)
+
+
+async def connect_mailflare_mailbox(store: MailboxStore, config, *,
+                                    address: str, display_name: str,
+                                    warmup_started_at: str = "") -> str:
+    """Register another authorized Mailflare sender identity.
+
+    Mailflare credentials are shared from the environment; no API key is
+    copied into the mailbox row or keychain. Mailflare itself enforces whether
+    the address is authorized when the first approved message is sent.
+    """
+    check_provider_allows_inboxes(config)
+    addr, mailbox_id = await _check_address(store, config, address)
+    warmup = check_warmup_start(warmup_started_at)
+    return await _insert(store, mailbox_id=mailbox_id, address=addr,
+                         provider="mailflare", connection="mailflare",
+                         display_name=display_name, credential_ref="",
+                         warmup_started_at=warmup)
 
 
 async def connect_smtp_mailbox(store: MailboxStore, secrets: SecretStore, config, *,

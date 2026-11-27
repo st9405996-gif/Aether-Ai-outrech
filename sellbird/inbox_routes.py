@@ -23,7 +23,8 @@ from fastapi.responses import JSONResponse
 
 from sellbird.mailboxes import (
     HARD_MAX_INBOX_CAP, MAIN, ConnectRefused, MailboxStore, build_provider,
-    check_provider_allows_inboxes, connect_oauth_mailbox, connect_smtp_mailbox, load_inboxes,
+    check_provider_allows_inboxes, connect_oauth_mailbox, connect_smtp_mailbox,
+    connect_mailflare_mailbox, load_inboxes,
 )
 from sellbird.secrets import SecretStore, SecretStoreUnavailable
 
@@ -395,8 +396,8 @@ async def connect_main_mailbox():
 @router.post("/api/inboxes/connect/{kind}")
 async def connect_inbox(kind: str, request: Request):
     global _connect_task
-    if kind not in ("gmail", "microsoft", "smtp"):
-        return _refuse("Connect gmail, microsoft or smtp.", 404)
+    if kind not in ("gmail", "microsoft", "smtp", "mailflare"):
+        return _refuse("Connect gmail, microsoft, smtp or mailflare.", 404)
     body = await _body(request)
     config, env = _config_env()
     try:
@@ -407,6 +408,8 @@ async def connect_inbox(kind: str, request: Request):
 
     if kind == "smtp":
         return await _connect_smtp(body, address, name, warmup, config, env)
+    if kind == "mailflare":
+        return await _connect_mailflare(address, name, warmup, config, env)
 
     problem = _connect_problem(kind, env)
     if problem:
@@ -423,6 +426,36 @@ async def connect_inbox(kind: str, request: Request):
 @router.get("/api/inboxes/connect/status")
 async def connect_status():
     return _connect_job_view()
+
+
+async def _connect_mailflare(address, name, warmup, config, env):
+    """Add a sender address that is already authorized in the Mailflare account."""
+    from sellbird.integrations.mailflare import MailflareProvider
+
+    if not (getattr(env, "mailflare_api_key", "") or "").strip() or not (
+            getattr(env, "mailflare_jmap_api_key", "") or "").strip():
+        return _refuse("Configure the Mailflare send API key and JMAP key in Sending and keys first.")
+    # Verify the shared account's JMAP connection before recording another identity.
+    try:
+        ok, detail = await asyncio.wait_for(
+            MailflareProvider(config, env).test_connection(), timeout=30)
+    except Exception as e:
+        return _refuse(f"Mailflare account check failed ({type(e).__name__}).")
+    if not ok:
+        return _refuse("Mailflare account check failed: " + detail)
+    store = _store()
+    await store.init_db()
+    try:
+        mailbox_id = await connect_mailflare_mailbox(
+            store, config, address=address, display_name=name,
+            warmup_started_at=warmup)
+    except ConnectRefused as e:
+        return _refuse(str(e))
+    await store.log_action(action_type="inbox_connected", agent="you",
+                           details={"inbox": address, "provider": "mailflare"})
+    return {"success": True, "address": address, "test_ok": True,
+            "test_detail": (detail + " Sender authorization is checked by Mailflare "
+                            "when the first approved email is sent."), "mailbox_id": mailbox_id}
 
 
 async def _connect_smtp(body, address, name, warmup, config, env):
