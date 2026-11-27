@@ -1,0 +1,10 @@
+# Optional remote access to the existing loopback-only dashboard.
+# Configure a Cloudflare Tunnel public hostname whose service is http://localhost:5555,
+# and require Cloudflare Access before enabling public DNS.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    network_mode: host
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    restart: unless-stopped
+    init: true
