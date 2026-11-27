@@ -70,3 +70,10 @@ The existing Sellbird dashboard deliberately binds to loopback only and refuses 
 | `SELLBIRD_AI_SECRET` | Shared bearer secret between Sellbird and the Worker |
 
 Never commit real credentials or place them in `sellbird.yaml`.
+
+
+## Additional Mailflare sender identities
+
+When `channels.email.provider` is `mailflare`, open **Inboxes → Add inbox → Mailflare sender** and enter another sender address that is already authorized in the same Mailflare account. The send and JMAP credentials remain shared from the environment; no extra credential is stored per sender. The campaign inbox selector can then restrict a campaign to the chosen sender addresses.
+
+The connection check verifies access to the shared JMAP Inbox and does not send a test message. Mailflare's send API remains the authority for whether a particular `From` address is permitted, so authorization is definitively checked only when the first approved message is sent. Replies are filtered by the recipient address (`to`/`cc`) to avoid one sender identity claiming another identity's replies. If the Mailflare deployment omits recipient fields from JMAP Email/get results, replies for those messages will not be attributed; do not disable this filter or it can misroute replies.

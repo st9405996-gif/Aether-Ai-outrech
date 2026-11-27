@@ -3,6 +3,7 @@
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -449,3 +450,25 @@ async def test_the_cli_pauses_caps_and_lists(store, boxes, capsys):
     assert "two@side.co" in out and "paused" in out and "0/12" in out and "holiday" in out
     assert await inbox_cli.run(Namespace(inboxes_action="test", address="nobody@x.co"),
                                store, secrets, cfg, Env()) == 1
+
+
+@pytest.mark.asyncio
+async def test_mailflare_sender_alias_uses_shared_credentials_and_identity(store):
+    from sellbird.integrations.mailflare import MailflareProvider
+    class MailflareConfig(Config):
+        class channels:
+            class email:
+                provider = "mailflare"
+    env = SimpleNamespace(mailflare_base_url="https://mailflare.test",
+                          mailflare_api_key="send-key", mailflare_jmap_api_key="jmap-key")
+    mid = await mailboxes.connect_mailflare_mailbox(
+        store, MailflareConfig, address="alias@example.test", display_name="Sales 2",
+        warmup_started_at="")
+    row = await store.get_mailbox(mid)
+    assert row["provider"] == "mailflare" and row["connection"] == "mailflare"
+    assert not row["credential_ref"] and "send-key" not in json.dumps(row)
+    provider = mailboxes.build_provider(row, config=MailflareConfig, env=env,
+        secrets=SecretStore(backend=MemorySecretBackend(), env={}))
+    assert isinstance(provider, MailflareProvider)
+    assert provider.identity.address == "alias@example.test"
+    assert provider.api_key == "send-key" and provider.jmap_api_key == "jmap-key"
