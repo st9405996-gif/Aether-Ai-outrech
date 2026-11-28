@@ -6,7 +6,11 @@ from sellbird.integrations.cloud_ai import CloudAITransport
 
 def test_cloud_ai_routes_tasks_to_specialized_worker_endpoints():
     assert CloudAITransport.route("scout", "score_contacts") == "/v1/research-score"
-    assert CloudAITransport.route("handler", "") == "/v1/classify-reply"
+    # Routing is by task, not by agent: the Handler also writes replies, and
+    # those must go to Workers AI, not to the Gemini classifier.
+    assert CloudAITransport.route("handler", "classify_intent") == "/v1/classify-reply"
+    assert CloudAITransport.route("handler", "generate_response") == "/v1/write-email"
+    assert CloudAITransport.route("handler", "fix_reply") == "/v1/write-email"
     assert CloudAITransport.route("writer", "personal_email") == "/v1/write-email"
 
 
