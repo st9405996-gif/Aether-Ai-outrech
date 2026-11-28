@@ -20,7 +20,7 @@ The adapter uses Mailflare's `POST /api/v1/send` route for outbound messages and
    ```
 
 5. Keep the sender address in `persona.email` authorized in Mailflare. Test the provider from Sellbird's Inboxes screen or run `sellbird doctor`.
-6. Mailflare currently works as the primary sending inbox. The secondary-inbox UI does not yet connect additional Mailflare addresses; use the existing Gmail, Microsoft 365 or SMTP paths for extra inboxes.
+6. To add another Mailflare sender identity, open **Inboxes → Add inbox → Mailflare sender** and enter an address already authorized in the same Mailflare account. The additional identity uses the existing shared Mailflare JMAP/send credentials; no separate credentials are stored for each sender. You can then choose the sender identities in the campaign inbox selector.
 
 The send key is not tested by sending a real message: the connection check verifies JMAP access and explains that Mailflare checks send permission on the first approved send. A timeout or disconnect after a send request is treated as an uncertain outcome; Sellbird must not blindly retry it. Reply reads fail closed and propagate read errors so the heartbeat can hold sending when it cannot reliably inspect replies.
 
@@ -57,7 +57,7 @@ The Worker uses Workers AI model `@cf/meta/llama-3.3-70b-instruct-fp8-fast` by d
 
 ## Local dashboard and remote access
 
-The existing Sellbird dashboard deliberately binds to loopback only and refuses a public network bind. This patch preserves that security boundary. The project still runs locally on desktop; its existing Docker/remote-host workflow uses an SSH tunnel to reach the loopback dashboard. Mailflare is currently wired as the primary sending provider; connecting multiple separate Mailflare inboxes through the secondary-inbox UI is not implemented in this patch. A public multi-user hosted dashboard is not implemented by this integration: it needs a durable database volume, workspace-isolated secret storage, HTTPS, authentication/session management and a supported Python hosting target. A Cloudflare Worker cannot host the existing FastAPI/SQLite application by itself.
+The existing Sellbird dashboard deliberately binds to loopback only and refuses a public network bind. This patch preserves that security boundary. The project still runs locally on desktop; its existing Docker/remote-host workflow uses an SSH tunnel to reach the loopback dashboard. Mailflare supports additional sender identities through **Inboxes → Add inbox → Mailflare sender**. These identities share the existing Mailflare credentials from the environment; they are not separate Mailflare accounts or independently credentialed inbox connections. The connection check verifies shared JMAP access, while Mailflare's send API determines whether a particular From address is permitted on the first approved send. Inbound replies are filtered using recipient addresses (`to`/`cc`) to keep replies associated with the matching sender identity. A public multi-user hosted dashboard is not implemented by this integration: it needs a durable database volume, workspace-isolated secret storage, HTTPS, authentication/session management and a supported Python hosting target. A Cloudflare Worker cannot host the existing FastAPI/SQLite application by itself.
 
 ## Configuration variables
 
@@ -70,3 +70,10 @@ The existing Sellbird dashboard deliberately binds to loopback only and refuses 
 | `SELLBIRD_AI_SECRET` | Shared bearer secret between Sellbird and the Worker |
 
 Never commit real credentials or place them in `sellbird.yaml`.
+
+
+## Additional Mailflare sender identities
+
+When `channels.email.provider` is `mailflare`, open **Inboxes → Add inbox → Mailflare sender** and enter another sender address that is already authorized in the same Mailflare account. The send and JMAP credentials remain shared from the environment; no extra credential is stored per sender. The campaign inbox selector can then restrict a campaign to the chosen sender addresses.
+
+The connection check verifies access to the shared JMAP Inbox and does not send a test message. Mailflare's send API remains the authority for whether a particular `From` address is permitted, so authorization is definitively checked only when the first approved message is sent. Replies are filtered by the recipient address (`to`/`cc`) to avoid one sender identity claiming another identity's replies. If the Mailflare deployment omits recipient fields from JMAP Email/get results, replies for those messages will not be attributed; do not disable this filter or it can misroute replies.

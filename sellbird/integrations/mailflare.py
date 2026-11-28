@@ -165,6 +165,13 @@ class MailflareProvider(MailProvider):
         return ""
 
     @staticmethod
+    def _addresses(items) -> set[str]:
+        if not isinstance(items, list):
+            return set()
+        return {str(item["email"]).strip().lower() for item in items
+                if isinstance(item, dict) and item.get("email")}
+
+    @staticmethod
     def _body_values(message: dict) -> str:
         values = message.get("bodyValues") or {}
         if isinstance(values, dict):
@@ -216,7 +223,7 @@ class MailflareProvider(MailProvider):
                 return []
             got = await self._jmap_call(client, session, "Email/get", {
                 "ids": ids,
-                "properties": ["id", "from", "subject", "receivedAt", "messageId",
+                "properties": ["id", "from", "to", "cc", "subject", "receivedAt", "messageId",
                                "inReplyTo", "references", "threadId", "preview",
                                "textBody", "htmlBody", "bodyValues", "keywords"],
                 "bodyProperties": ["partId", "type", "charset", "disposition", "cid", "language", "location"],
@@ -232,6 +239,12 @@ class MailflareProvider(MailProvider):
                     continue
                 sender = self._address(item.get("from"))
                 if not sender:
+                    continue
+                # Every sender identity on this Mailflare account reads the
+                # same JMAP Inbox. Route a reply only to the alias it was sent
+                # to, rather than letting the first reader claim every reply.
+                recipients = self._addresses(item.get("to")) | self._addresses(item.get("cc"))
+                if not self.identity.address or self.identity.address.strip().lower() not in recipients:
                     continue
                 out.append(InboundMessage(
                     provider_id=str(item.get("id") or ""),

@@ -3078,6 +3078,7 @@ async function loadCampaigns() {
   }
   const pipe = await api('/api/pipeline');
   if (pipe && !pipe.error) _pipeline = pipe;
+  const inboxData = await api('/api/inboxes');
   const len = (_pipeline && _pipeline.sequence_length) || 3;
   let html = '<p class="ask" style="margin:0 0 16px">New sequences are <b>' + len + ' email' + (len === 1 ? '' : 's') +
     '</b> long. There is no fixed limit: set <code>writer.sequence_length</code> in sellbird.yaml, or ask your coding agent. ' +
@@ -3129,11 +3130,41 @@ async function loadCampaigns() {
         '<button class="btn btn-ghost btn-sm" onclick="fbCampaign(' + i + ')">Feedback</button></div>' +
       '<div class="meta">' + badge(c.status) + '<span>' + pc + ' prospect' + (pc !== 1 ? 's' : '') + '</span>' +
         '<span>' + (c.sequence || []).length + ' emails</span><span>Created ' + relTime(c.created_at) + '</span></div>' +
-      campaignProgress(c) + '</div>' +
+      campaignProgress(c) + campaignSenderPicker(c, inboxData) + '</div>' +
       '<div class="sequence">' +
       (stepsHtml || '<p class="muted" style="font-size:13px;padding-top:16px">No email steps in this campaign.</p>') + '</div></div>';
   });
   el.innerHTML = html;
+}
+
+function campaignSenderPicker(c, inboxData) {
+  if (!inboxData || !inboxData.native || (inboxData.inboxes || []).length < 2) return '';
+  const pools = inboxData.pools || {};
+  const chosen = pools[c.id] || [];
+  const options = (inboxData.inboxes || []).map(ib => {
+    const value = ib.main ? 'main' : ib.id;
+    return '<option value="' + escHtml(value) + '"' + (chosen.includes(value) ? ' selected' : '') + '>' +
+      escHtml((ib.address || 'Main mailbox') + (ib.state === 'not_connected' ? ' (not connected)' : '')) + '</option>';
+  }).join('');
+  return '<div class="campaign-senders"><label class="form-label" for="campaign-senders-' + escHtml(c.id) + '">Send this campaign from</label>' +
+    '<select class="form-input" id="campaign-senders-' + escHtml(c.id) + '" multiple size="' +
+    Math.min(4, Math.max(2, (inboxData.inboxes || []).length)) + '" onchange="saveCampaignSenders(' + jsq(c.id) + ', this)">' + options + '</select>' +
+    '<div class="form-hint">Choose one or more sender addresses. Leave all options unselected to let Sellbird distribute new threads across all available inboxes. Existing threads keep their original sender.</div></div>';
+}
+
+async function saveCampaignSenders(campaignId, select) {
+  const selected = Array.from(select.selectedOptions).map(o => o.value);
+  const inboxes = selected;
+  const r = await api('/api/campaigns/' + encodeURIComponent(campaignId) + '/inboxes', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({inboxes})
+  });
+  if (r && r.success) {
+    showToast('Campaign sender selection saved.', 'success');
+    loadInboxes();
+  } else {
+    showToast((r && r.message) || 'Could not save campaign senders.', 'error');
+  }
 }
 
 // The whole exchange in order: Sellbird's cold emails (from the Outbox), the
@@ -3282,6 +3313,7 @@ const INBOX_KINDS = {
   gmail: ['Gmail', 'Google Workspace or Gmail. Sign in with Google in your browser.'],
   microsoft: ['Microsoft 365', 'Outlook or Microsoft 365. Sign in with Microsoft in your browser.'],
   smtp: ['Other (SMTP)', 'Any other email host, with its SMTP server and password.'],
+  mailflare: ['Mailflare sender', 'Add another sender address already authorized in your connected Mailflare account.'],
 };
 let _inboxes = null;
 let _inboxPoll = null;
@@ -3522,20 +3554,24 @@ function openAddInbox(kind) {
       '<div class="form-row"><div class="form-group"><label class="form-label" for="add-imap">IMAP server</label><input class="form-input" id="add-imap" placeholder="Same as the SMTP server"></div>' +
       '<div class="form-group" style="max-width:110px"><label class="form-label" for="add-imap-port">Port</label><input class="form-input" id="add-imap-port" type="number" value="993"></div></div></details>';
     note = '<p class="form-hint">The password goes straight to your system keychain. Sellbird never shows it again.</p>';
+  } else if (_addKind === 'mailflare') {
+    note = '<p class="form-hint">Use an address already authorized for sending in this Mailflare account. The shared JMAP inbox is filtered by the recipient address so replies are assigned to the matching sender. Mailflare verifies sender permission on the first approved send; no email is sent during connection.</p>';
   } else if (!can[_addKind]) {
     note = connectSetupNotice(_addKind);
   } else {
     note = '<p class="form-hint">A ' + INBOX_KINDS[_addKind][0] + ' sign-in opens in the browser on the computer running Sellbird. Sign in as the address above.</p>';
   }
-  note += '<div class="modal-section"><h4>Or from your terminal</h4><div class="cmd-copy"><code id="add-cmd"></code>' +
-    '<button class="btn btn-secondary btn-sm" onclick="copyAddCommand()">Copy</button></div></div>';
-  const disabled = _addKind !== 'smtp' && !can[_addKind];
+  if (_addKind !== 'mailflare') {
+    note += '<div class="modal-section"><h4>Or from your terminal</h4><div class="cmd-copy"><code id="add-cmd"></code>' +
+      '<button class="btn btn-secondary btn-sm" onclick="copyAddCommand()">Copy</button></div></div>';
+  }
+  const disabled = _addKind !== 'smtp' && _addKind !== 'mailflare' && !can[_addKind];
   inboxDialog(inboxDialogHead('Add an inbox', 'Connect an inbox you already own. Sellbird sends from it and reads its replies.') +
     '<div class="modal-body"><div class="provider-picks">' + picks + '</div><div style="height:16px"></div>' +
     '<div id="add-status"></div>' + form + note + '</div>' +
     '<div class="modal-foot"><button class="btn btn-ghost" onclick="closeInboxDialog()">Cancel</button>' +
     '<button class="btn btn-primary" id="add-go" onclick="submitAddInbox()"' + (disabled ? ' disabled' : '') + '>' +
-    (_addKind === 'smtp' ? 'Connect' : 'Sign in with ' + (_addKind === 'gmail' ? 'Google' : 'Microsoft')) + '</button></div>');
+    (_addKind === 'smtp' || _addKind === 'mailflare' ? 'Connect' : 'Sign in with ' + (_addKind === 'gmail' ? 'Google' : 'Microsoft')) + '</button></div>');
   updateAddCommand();
 }
 
@@ -3639,7 +3675,7 @@ async function submitAddInbox() {
       imap_host: v('add-imap'), imap_port: Number(v('add-imap-port') || 993)});
   }
   go.disabled = true;
-  addStatus('info', _addKind === 'smtp' ? 'Connecting and checking the sign-in...' : 'Opening the sign-in...');
+  addStatus('info', (_addKind === 'smtp' || _addKind === 'mailflare') ? 'Connecting and checking the account...' : 'Opening the sign-in...');
   const r = await api('/api/inboxes/connect/' + _addKind, {method: 'POST',
     headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   if (!r || !r.success) {
@@ -3647,7 +3683,7 @@ async function submitAddInbox() {
     addStatus('bad', escHtml((r && r.message) || 'That didn\'t work.'));
     return;
   }
-  if (_addKind === 'smtp') {
+  if (_addKind === 'smtp' || _addKind === 'mailflare') {
     showToast('Connected ' + r.address, 'success');
     if (!r.test_ok) showToast('It\'s connected, but the check failed: ' + (r.test_detail || ''), 'error');
     closeInboxDialog(); loadInboxes();

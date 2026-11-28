@@ -28,18 +28,19 @@
 ## Not implemented / requires your account
 
 - The Mailflare API key and JMAP key were intentionally not supplied, so live account authentication and delivery were not tested. The deployed Mailflare Worker must be verified with your own credentials before relying on it.
-- Mailflare is connected as the primary sending inbox only. Additional Mailflare inboxes are not yet supported in Sellbird's secondary-inbox screen; existing Gmail, Microsoft 365 and SMTP secondary inbox paths remain available.
+- Additional Mailflare sender identities can now be added in the Inboxes screen. Add only addresses already authorized in the same Mailflare account. The account's shared JMAP Inbox is filtered by each message's `to`/`cc` recipients so replies are attributed to the matching sender identity. Campaign cards now expose a multi-select sender picker backed by the existing campaign mailbox-pool API. Mailflare sender authorization is not independently queried by the current API adapter; the first approved send is the definitive authorization check. The connection test verifies JMAP access only and does not send a test email.
 - The existing FastAPI dashboard remains local/loopback-only. This patch does not create a public hosted dashboard. A Cloudflare Worker is not a host for the existing FastAPI + SQLite application; remote use remains via the project's SSH-tunnel workflow.
 - The Cloudflare Worker was not deployed. Wrangler and the Cloudflare Workers type package were not installed in this environment.
 
 ## Validation performed
 
 - Python compile check: passed.
+- Dashboard JavaScript syntax check (`node --check`): passed.
+- Added unit coverage for Mailflare sender identity construction and recipient-based reply routing; execution is blocked in this environment because `aiosqlite` is not installed.
 - Mailflare send adapter mock smoke test: passed.
 - Cloud AI transport mock smoke test: passed.
 - `BrainConfig(provider="cloudflare")` and new environment config fields: passed.
 - Dashboard settings element/function wiring check: passed.
-- Dashboard JavaScript syntax check (`node --check`): passed.
 - YAML parse check: passed.
 - Full pytest collection could not run because this environment lacks project dependencies including `aiosqlite`, `mcp` and `aiosmtplib`; network access was unavailable to install them.
 - Cloudflare Worker typecheck could not run because `@cloudflare/workers-types` is not installed.
